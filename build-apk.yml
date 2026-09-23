@@ -1,0 +1,79 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main, codex/build-apk]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Expand uploaded source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            https://raw.githubusercontent.com/wlibra365/local-voice/main/local-voice-github-source-20260923.zip \
+            --output /tmp/local-voice-source.zip
+          unzip -q /tmp/local-voice-source.zip
+          cp -a voice-local/. .
+          rm -rf voice-local
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install test dependency
+        run: python -m pip install numpy==1.26.4
+      - name: Verify source
+        run: bash tests/run.sh
+      - name: Download and verify Android runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p app/libs
+          curl --fail --location --retry 3 \
+            https://repo.maven.apache.org/maven2/com/microsoft/onnxruntime/onnxruntime-mobile/1.23.2/onnxruntime-mobile-1.23.2.aar \
+            --output app/libs/onnxruntime-mobile.aar
+          echo '82048d1f462218adae4ba76477089ab0ba76093d84f733540066db1a8ba6b827  app/libs/onnxruntime-mobile.aar' | sha256sum --check
+      - name: Prepare CPU model exporter
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install numpy==1.26.4 onnx==1.17.0 onnxruntime==1.23.1 speechbrain==1.0.3
+          git clone --quiet https://github.com/KoeAI/LLVC.git /tmp/llvc-upstream
+          git -C /tmp/llvc-upstream checkout --quiet a057f5c5debe07c5a3e462841578fc33e928053a
+          curl --fail --location --retry 3 \
+            'https://huggingface.co/KoeAI/llvc_models/resolve/main/models/checkpoints/llvc/G_500000.pth?download=true' \
+            --output /tmp/llvc-G_500000.pth
+          echo 'cceb7ab9621f84d62d283725ae3281cacb04f762d6a088fe3e97c1a29d4b8c0e  /tmp/llvc-G_500000.pth' | sha256sum --check
+      - name: Export and verify bundled voice
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/export_llvc_onnx.py \
+            --llvc-repo /tmp/llvc-upstream \
+            --checkpoint /tmp/llvc-G_500000.pth \
+            --config models/llvc-official-config.json \
+            --license app/src/main/assets/models/llvc/LICENSE.model.txt \
+            --output /tmp/local-voice-model
+          python tools/verify_model_package.py /tmp/local-voice-model/model-package.json
+          cp /tmp/local-voice-model/llvc.onnx /tmp/local-voice-model/model-package.json app/src/main/assets/models/llvc/
+      - name: Build and verify APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          bash build-apk.sh
+          echo "APK bytes: $(stat -c %s app/build/outputs/apk/debug/local-voice-debug.apk)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: local-voice-debug-apk
+          path: app/build/outputs/apk/debug/local-voice-debug.apk
+          if-no-files-found: error
