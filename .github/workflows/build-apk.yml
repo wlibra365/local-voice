@@ -37,7 +37,7 @@ jobs:
           set -euo pipefail
           mkdir -p app/libs
           curl --fail --location --retry 3 \
-            https://repo.maven.apache.org/maven2/com/microsoft/onnxruntime/onnxruntime-mobile/1.23.2/onnxruntime-mobile-1.23.2.aar \
+            https://repo.maven.apache.org/maven2/com/microsoft/onnxruntime/onnxruntime-android/1.23.2/onnxruntime-android-1.23.2.aar \
             --output app/libs/onnxruntime-mobile.aar
           echo '82048d1f462218adae4ba76477089ab0ba76093d84f733540066db1a8ba6b827  app/libs/onnxruntime-mobile.aar' | sha256sum --check
       - name: Prepare CPU model exporter
